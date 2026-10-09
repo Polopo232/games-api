@@ -18,6 +18,7 @@
   "homepage": "https://github.com/Polopo232/games-api#readme",
   "description": "",
   "dependencies": {
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "swagger-ui-express": "^5.0.1"
   }
 }
