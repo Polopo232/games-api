@@ -37,7 +37,6 @@ function getBaseUrl(req) {
 }
 
 app.post('/games', (req, res) => {
-    // 1. Проверяем, переданы ли name и price
     if (!req.body.name || typeof req.body.price !== 'number') {
         return res.status(400).send({ error: "Bad input parameters or invalid request" })
     }
@@ -53,6 +52,19 @@ app.post('/games', (req, res) => {
     res.status(201)
         .location(`${getBaseUrl(req)}/games/${game.id}`)
         .send(game)
+})
+
+app.delete('/games/:id', (req, res) => {
+    const index = req.params.id - 1
+    const game = games[index]
+
+    if (typeof game === 'undefined') {
+        return res.status(404).send({ error: "Game not found" })
+    }
+
+    games.splice(index, 1)
+
+    res.status(204).send()
 })
 
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
