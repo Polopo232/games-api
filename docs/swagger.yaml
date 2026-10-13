@@ -81,6 +81,24 @@ paths:
           description: Game was not found in games array
           schema:
             $ref: '#/definitions/Error'
+    delete:
+      tags:
+        - delete-game
+      summary: Deletes a game
+      description: Deletes a game by its ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          type: integer
+          description: ID of the game to delete
+      responses:
+        '204':
+          description: Game was successfully deleted (No Content)
+        '404':
+          description: Game was not found in games array
+          schema:
+            $ref: '#/definitions/Error'
 
 definitions:
   Game:
@@ -109,6 +127,15 @@ definitions:
         type: number
         format: float
         example: 0.99
+
+  DeleteGame:
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: integer
+        example: 2
 
   Error:
     type: object
