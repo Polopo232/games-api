@@ -1,8 +1,11 @@
-const app = require('express')()
+const express = require('express')
+const app = express()
 const port = 8080
 const swaggerUi = require('swagger-ui-express')
 const YAML = require('yamljs')
 const swaggerDocument = YAML.load('./docs/swagger.yaml')
+
+app.use(express.json())
 
 const games = [
     { id: 1, name: "Witcher 3", price: 29.99 },
@@ -27,6 +30,29 @@ app.get('/games/:id', (req, res) => {
     }
 
     res.send(game)
+})
+
+function getBaseUrl(req) {
+    return `${req.protocol}://${req.get('host')}`
+}
+
+app.post('/games', (req, res) => {
+    // 1. Проверяем, переданы ли name и price
+    if (!req.body.name || typeof req.body.price !== 'number') {
+        return res.status(400).send({ error: "Bad input parameters or invalid request" })
+    }
+
+    const game = {
+        id: games.length + 1,
+        name: req.body.name,
+        price: req.body.price
+    }
+
+    games.push(game)
+
+    res.status(201)
+        .location(`${getBaseUrl(req)}/games/${game.id}`)
+        .send(game)
 })
 
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))

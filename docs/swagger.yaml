@@ -38,6 +38,27 @@ paths:
             type: array
             items:
               $ref: '#/definitions/Game'
+    post:
+      tags:
+        - new-game
+      summary: Creates a game
+      description: Creates a new game
+      parameters:
+        - in: body
+          name: body
+          required: true
+          description: A new game to be created
+          schema:
+            $ref: '#/definitions/NewGame'
+      responses:
+        '201':
+          description: Game created successfully
+          schema:
+            $ref: '#/definitions/Game'
+        '400':
+          description: One or all params are missing
+          schema:
+            $ref: '#/definitions/Error'
 
   /games/{id}:
     get:
@@ -74,6 +95,20 @@ definitions:
       price:
         type: number
         example: 29.99
+
+  NewGame:
+    type: object
+    required:
+      - name
+      - price
+    properties:
+      name:
+        type: string
+        example: Tetris
+      price:
+        type: number
+        format: float
+        example: 0.99
 
   Error:
     type: object
