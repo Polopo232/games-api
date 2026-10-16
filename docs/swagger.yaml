@@ -81,6 +81,36 @@ paths:
           description: Game was not found in games array
           schema:
             $ref: '#/definitions/Error'
+    put:
+      tags:
+        - update-game
+      summary: Updates a game
+      description: Replaces name and price of an existing game
+      parameters:
+        - name: id
+          in: path
+          required: true
+          type: integer
+          description: ID of the game to update
+        - in: body
+          name: body
+          required: true
+          description: New data for the game
+          schema:
+            $ref: '#/definitions/NewGame'
+      responses:
+        '200':
+          description: Game updated successfully
+          schema:
+            $ref: '#/definitions/Game'
+        '400':
+          description: One or all params are missing or invalid
+          schema:
+            $ref: '#/definitions/Error'
+        '404':
+          description: Game was not found in games array
+          schema:
+            $ref: '#/definitions/Error'
     delete:
       tags:
         - delete-game
