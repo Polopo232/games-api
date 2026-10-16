@@ -164,7 +164,6 @@ Vue.createApp({
             this.user = data.user;
             localStorage.setItem('token', data.token);
             hideModal('loginModal');
-            this.flash(`Welcome, ${data.user.username}!`);
         },
 
         async logout() {
