@@ -41,7 +41,7 @@ function isValidGame(body) {
         && typeof body.price === 'number' && body.price >= 0
 }
 
-const handle = fn => (req, res) => fn(req, res).catch(err => {
+const handle = fn => (req, res, next) => fn(req, res, next).catch(err => {
     if (err.code === 11000) {
         return res.status(409).send({error: "Game with this name already exists"})
     }
@@ -49,7 +49,81 @@ const handle = fn => (req, res) => fn(req, res).catch(err => {
     res.status(500).send({error: "Server error"})
 })
 
-app.get('/games', handle(async (req, res) => {
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')))
+app.get('/rest-client.js', (req, res) => res.sendFile(path.join(__dirname, 'rest-client.js')))
+
+const auth = handle(async (req, res, next) => {
+    const header = req.headers.authorization || ''
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null
+    req.user = token ? await db.getSession(token) : null
+    req.token = token
+    next()
+})
+
+function requireLogin(req, res, next) {
+    if (!req.user) {
+        return res.status(401).send({error: "Login required"})
+    }
+    next()
+}
+
+function requireAdmin(req, res, next) {
+    if (!req.user) {
+        return res.status(401).send({error: "Login required"})
+    }
+    if (req.user.role !== 'admin') {
+        return res.status(403).send({error: "Only admin can do this"})
+    }
+    next()
+}
+
+app.use(auth)
+
+function isValidCredentials(body) {
+    return body
+        && typeof body.username === 'string' && body.username.trim() !== ''
+        && typeof body.password === 'string' && body.password !== ''
+}
+
+app.post('/login', handle(async (req, res) => {
+    if (!isValidCredentials(req.body)) {
+        return res.status(400).send({error: "username and password are required"})
+    }
+    const user = await db.checkLogin(req.body.username, req.body.password)
+    if (!user) {
+        return res.status(401).send({error: "Wrong username or password"})
+    }
+    const token = await db.createSession(user)
+    res.send({token, user})
+}))
+
+app.post('/register', handle(async (req, res) => {
+    if (!isValidCredentials(req.body)) {
+        return res.status(400).send({error: "username and password are required"})
+    }
+    if (req.body.password.length < 4) {
+        return res.status(400).send({error: "Password must be at least 4 characters"})
+    }
+    if (await db.usernameExists(req.body.username)) {
+        return res.status(409).send({error: "Username is already taken"})
+    }
+    const user = await db.addUser(req.body.username, req.body.password, 'user')
+    const token = await db.createSession(user)
+    res.status(201).send({token, user})
+}))
+
+app.post('/logout', requireLogin, handle(async (req, res) => {
+    await db.deleteSession(req.token)
+    res.status(204).send()
+}))
+
+app.get('/me', requireLogin, (req, res) => {
+    res.send(req.user)
+})
+
+// ---------- Игры ----------
+
+app.get('/games',handle(async (req, res) => {
     res.send(await db.getGames())
 }))
 
@@ -61,7 +135,7 @@ app.get('/games/:id', handle(async (req, res) => {
     res.send(game)
 }))
 
-app.post('/games', handle(async (req, res) => {
+app.post('/games', requireLogin, handle(async (req, res) => {
     if (!isValidGame(req.body)) {
         return res.status(400).send({error: "name (string) and price (number >= 0) are required"})
     }
@@ -74,7 +148,7 @@ app.post('/games', handle(async (req, res) => {
         .send(game)
 }))
 
-app.put('/games/:id', handle(async (req, res) => {
+app.put('/games/:id', requireAdmin, handle(async (req, res) => {
     if (!await db.getGame(req.params.id)) {
         return res.status(404).send({error: "Game not found"})
     }
@@ -87,7 +161,7 @@ app.put('/games/:id', handle(async (req, res) => {
     res.send(await db.updateGame(req.params.id, req.body.name, req.body.price))
 }))
 
-app.delete('/games/:id', handle(async (req, res) => {
+app.delete('/games/:id', requireAdmin, handle(async (req, res) => {
     if (!await db.deleteGame(req.params.id)) {
         return res.status(404).send({error: "Game not found"})
     }
@@ -101,7 +175,8 @@ function getBaseUrl(req) {
 db.connect()
     .then(() => {
         app.listen(port, () => {
-            console.log(`API up at: http://localhost:${port}`)
+            console.log(`Site at:   http://localhost:${port}`)
+            console.log(`API up at: http://localhost:${port}/games`)
             console.log(`Docs at:   http://localhost:${port}/docs`)
         })
     })

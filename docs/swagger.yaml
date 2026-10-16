@@ -21,10 +21,111 @@ info:
     |---|---|
     | 400| Bad input parameters or invalid request. More information can be found in the response body.
     | 401| The consumer does not have access to the requested resource or the provided token is not valid.
+    | 403| The user is logged in but is not an admin.
     | 404| The requested resource can not be found or the user does not have access to the resource.
     | 5XX| A server error has occurred while processing the request.
 
+    ### Roles
+    * **user** - can only view games (GET).
+    * **admin** - can also add, edit and delete games (POST / PUT / DELETE).
+
+    Log in with `POST /login`, copy the `token` and press **Authorize** at the top of this page.
+    Enter it as `Bearer <token>`.
+
+    Default accounts: `admin` / `admin123` and `user` / `user123`.
+
+securityDefinitions:
+  Bearer:
+    type: apiKey
+    name: Authorization
+    in: header
+    description: 'Enter: Bearer <token>'
+
 paths:
+  /login:
+    post:
+      tags:
+        - auth
+      summary: Log in
+      description: Returns a token that must be sent in the Authorization header
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            $ref: '#/definitions/Credentials'
+      responses:
+        '200':
+          description: Logged in successfully
+          schema:
+            $ref: '#/definitions/LoginResult'
+        '400':
+          description: username or password missing
+          schema:
+            $ref: '#/definitions/Error'
+        '401':
+          description: Wrong username or password
+          schema:
+            $ref: '#/definitions/Error'
+
+  /register:
+    post:
+      tags:
+        - auth
+      summary: Register a new user
+      description: Creates a regular user (role "user") and logs them in
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            $ref: '#/definitions/Credentials'
+      responses:
+        '201':
+          description: User created
+          schema:
+            $ref: '#/definitions/LoginResult'
+        '400':
+          description: username or password missing or too short
+          schema:
+            $ref: '#/definitions/Error'
+        '409':
+          description: Username is already taken
+          schema:
+            $ref: '#/definitions/Error'
+
+  /logout:
+    post:
+      tags:
+        - auth
+      summary: Log out
+      security:
+        - Bearer: []
+      responses:
+        '204':
+          description: Logged out
+        '401':
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/Error'
+
+  /me:
+    get:
+      tags:
+        - auth
+      summary: Current user
+      security:
+        - Bearer: []
+      responses:
+        '200':
+          description: The logged in user
+          schema:
+            $ref: '#/definitions/User'
+        '401':
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/Error'
+
   /games:
     get:
       tags:
@@ -41,7 +142,9 @@ paths:
     post:
       tags:
         - new-game
-      summary: Creates a game
+      summary: Creates a game (admin only)
+      security:
+        - Bearer: []
       description: Creates a new game
       parameters:
         - in: body
@@ -55,6 +158,14 @@ paths:
           description: Game created successfully
           schema:
             $ref: '#/definitions/Game'
+        '401':
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/Error'
+        '403':
+          description: Only admin can do this
+          schema:
+            $ref: '#/definitions/Error'
         '400':
           description: One or all params are missing
           schema:
@@ -88,7 +199,9 @@ paths:
     put:
       tags:
         - update-game
-      summary: Updates a game
+      summary: Updates a game (admin only)
+      security:
+        - Bearer: []
       description: Replaces name and price of an existing game
       parameters:
         - name: id
@@ -107,6 +220,14 @@ paths:
           description: Game updated successfully
           schema:
             $ref: '#/definitions/Game'
+        '401':
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/Error'
+        '403':
+          description: Only admin can do this
+          schema:
+            $ref: '#/definitions/Error'
         '400':
           description: One or all params are missing or invalid
           schema:
@@ -122,7 +243,9 @@ paths:
     delete:
       tags:
         - delete-game
-      summary: Deletes a game
+      summary: Deletes a game (admin only)
+      security:
+        - Bearer: []
       description: Deletes a game by its ID
       parameters:
         - name: id
@@ -133,12 +256,53 @@ paths:
       responses:
         '204':
           description: Game was successfully deleted (No Content)
+        '401':
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/Error'
+        '403':
+          description: Only admin can do this
+          schema:
+            $ref: '#/definitions/Error'
         '404':
           description: Game was not found in games array
           schema:
             $ref: '#/definitions/Error'
 
 definitions:
+  Credentials:
+    type: object
+    required:
+      - username
+      - password
+    properties:
+      username:
+        type: string
+        example: admin
+      password:
+        type: string
+        example: admin123
+
+  User:
+    type: object
+    properties:
+      username:
+        type: string
+        example: admin
+      role:
+        type: string
+        enum: [admin, user]
+        example: admin
+
+  LoginResult:
+    type: object
+    properties:
+      token:
+        type: string
+        example: 3f9c2a...
+      user:
+        $ref: '#/definitions/User'
+
   Game:
     type: object
     properties:
