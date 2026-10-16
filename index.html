@@ -59,33 +59,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/vue@3.2.47/dist/vue.global.js"></script>
-<script>
-  Vue.createApp({
-    data() {
-      return {
-        games: [],
-        gameInModal: {
-          id: null,
-          name: null,
-          price: null
-        }
-      }
-    },
-    async created() {
-      const response = await fetch('http://localhost:8080/games');
-      this.games = await response.json();
-    },
-    methods: {
-      async getGame(id) {
-        const response = await fetch(`http://localhost:8080/games/${id}`);
-        this.gameInModal = await response.json();
-
-        const modalElement = document.getElementById('gameInfoModal');
-        const gameInfoModal = new bootstrap.Modal(modalElement);
-        gameInfoModal.show();
-      }
-    }
-  }).mount('#app')
-</script>
+<script src="rest-client.js"></script>
 </body>
 </html>
