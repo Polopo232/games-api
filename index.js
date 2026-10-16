@@ -30,7 +30,9 @@ function findSwaggerFile(dir) {
 const swaggerFile = findSwaggerFile(__dirname)
 if (swaggerFile) {
     console.log('Swagger file:', swaggerFile)
-    app.use('/docs', swaggerUi.serve, swaggerUi.setup(YAML.load(swaggerFile)))
+    app.use('/docs', swaggerUi.serve, swaggerUi.setup(YAML.load(swaggerFile), {
+        swaggerOptions: {persistAuthorization: true} // токен не сбрасывается при обновлении страницы
+    }))
 } else {
     console.warn('swagger.yaml не найден в ' + __dirname + ' - /docs отключён. Положи swagger.yaml рядом с index.js')
 }
@@ -49,16 +51,42 @@ const handle = fn => (req, res, next) => fn(req, res, next).catch(err => {
     res.status(500).send({error: "Server error"})
 })
 
+// ---------- Фронтенд (отдаём только эти два файла, чтобы .env и код сервера не были доступны) ----------
+
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')))
 app.get('/rest-client.js', (req, res) => res.sendFile(path.join(__dirname, 'rest-client.js')))
 
+// ---------- Авторизация ----------
+
+function getCookie(req, name) {
+    for (const part of (req.headers.cookie || '').split(';')) {
+        const [key, ...value] = part.trim().split('=')
+        if (key === name) return decodeURIComponent(value.join('='))
+    }
+    return null
+}
+
 const auth = handle(async (req, res, next) => {
     const header = req.headers.authorization || ''
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null
-    req.user = token ? await db.getSession(token) : null
-    req.token = token
+    const tokens = [
+        header.replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim(),
+        getCookie(req, 'token')
+    ]
+    req.user = null
+    req.token = null
+    for (const token of tokens) {
+        if (!token) continue
+        const session = await db.getSession(token)
+        if (session) {
+            req.user = session
+            req.token = token
+            break
+        }
+    }
     next()
 })
+
+const COOKIE_OPTIONS = {httpOnly: true, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000}
 
 function requireLogin(req, res, next) {
     if (!req.user) {
@@ -94,6 +122,7 @@ app.post('/login', handle(async (req, res) => {
         return res.status(401).send({error: "Wrong username or password"})
     }
     const token = await db.createSession(user)
+    res.cookie('token', token, COOKIE_OPTIONS)
     res.send({token, user})
 }))
 
@@ -109,11 +138,13 @@ app.post('/register', handle(async (req, res) => {
     }
     const user = await db.addUser(req.body.username, req.body.password, 'user')
     const token = await db.createSession(user)
+    res.cookie('token', token, COOKIE_OPTIONS)
     res.status(201).send({token, user})
 }))
 
 app.post('/logout', requireLogin, handle(async (req, res) => {
     await db.deleteSession(req.token)
+    res.clearCookie('token', COOKIE_OPTIONS)
     res.status(204).send()
 }))
 
@@ -135,7 +166,7 @@ app.get('/games/:id', handle(async (req, res) => {
     res.send(game)
 }))
 
-app.post('/games', requireLogin, handle(async (req, res) => {
+app.post('/games', requireAdmin, handle(async (req, res) => {
     if (!isValidGame(req.body)) {
         return res.status(400).send({error: "name (string) and price (number >= 0) are required"})
     }
