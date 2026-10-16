@@ -59,6 +59,10 @@ paths:
           description: One or all params are missing
           schema:
             $ref: '#/definitions/Error'
+        '409':
+          description: Game with this name already exists
+          schema:
+            $ref: '#/definitions/Error'
 
   /games/{id}:
     get:
@@ -70,7 +74,7 @@ paths:
         - name: id
           in: path
           required: true
-          type: integer
+          type: string
           description: ID of the game to fetch
       responses:
         '200':
@@ -90,7 +94,7 @@ paths:
         - name: id
           in: path
           required: true
-          type: integer
+          type: string
           description: ID of the game to update
         - in: body
           name: body
@@ -111,6 +115,10 @@ paths:
           description: Game was not found in games array
           schema:
             $ref: '#/definitions/Error'
+        '409':
+          description: Game with this name already exists
+          schema:
+            $ref: '#/definitions/Error'
     delete:
       tags:
         - delete-game
@@ -120,7 +128,7 @@ paths:
         - name: id
           in: path
           required: true
-          type: integer
+          type: string
           description: ID of the game to delete
       responses:
         '204':
@@ -135,8 +143,8 @@ definitions:
     type: object
     properties:
       id:
-        type: integer
-        example: 1
+        type: string
+        example: 665f1c2e8a1b2c3d4e5f6a7b
       name:
         type: string
         example: Witcher 3
@@ -164,8 +172,8 @@ definitions:
       - id
     properties:
       id:
-        type: integer
-        example: 2
+        type: string
+        example: 665f1c2e8a1b2c3d4e5f6a7b
 
   Error:
     type: object
