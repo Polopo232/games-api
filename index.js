@@ -1,10 +1,12 @@
 const express = require('express')
+const cors = require('cors');
 const app = express()
 const port = 8080
 const swaggerUi = require('swagger-ui-express')
 const YAML = require('yamljs')
 const swaggerDocument = YAML.load('./docs/swagger.yaml')
 
+app.use(cors());
 app.use(express.json())
 
 const games = [
@@ -53,8 +55,6 @@ app.post('/games', (req, res) => {
         .location(`${getBaseUrl(req)}/games/${game.id}`)
         .send(game)
 })
-
-//1
 
 app.delete('/games/:id', (req, res) => {
     const index = req.params.id - 1
