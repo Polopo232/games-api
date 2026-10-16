@@ -1,48 +1,33 @@
 require('dotenv').config({override: true})
+const {MongoClient} = require('mongodb')
 
-const mongoose = require('mongoose')
-const Game = require('./models/Game')
+function getUrl() {
+    let url = (process.env.MONGODB_URI || process.env.MONGODB_URL || 'mongodb://localhost:27017')
+        .trim().replace(/^["']|["']$/g, '')
+    const user = process.env.MONGODB_USERNAME
+    const password = process.env.MONGODB_PASSWORD
 
-function env(...names) {
-    for (const name of names) {
-        if (process.env[name]) return process.env[name]
+    if (!url.includes('://')) {
+        url = (url.endsWith('.mongodb.net') ? 'mongodb+srv://' : 'mongodb://') + url
     }
-    return undefined
+    if (password && /<(db_)?password>/.test(url)) {
+        return url.replace(/<(db_)?password>/, encodeURIComponent(password))
+    }
+    if (user && password && !url.includes('@')) {
+        return url.replace('://', `://${encodeURIComponent(user)}:${encodeURIComponent(password)}@`)
+    }
+    return url
 }
 
-function buildMongoUri() {
-    const user = env('MONGODB_USERNAME')
-    const password = env('MONGODB_PASSWORD')
-    let url = env('MONGODB_URI')
+const client = new MongoClient(getUrl())
 
-    if (!url) {
-        throw new Error('In .env not found (MONGO_URI / MONGODB_URI / DB_URL / URL)')
-    }
-    url = url.trim().replace(/^["']|["']$/g, '')
+let games
+let counters
 
-    const encUser = user ? encodeURIComponent(user) : ''
-    const encPass = password ? encodeURIComponent(password) : ''
+const noMongoId = {projection: {_id: 0}}
+const ignoreCase = {collation: {locale: 'en', strength: 2}}
 
-    if (/^mongodb(\+srv)?:\/\//.test(url)) {
-        if (url.includes('<password>')) {
-            return url.replace('<password>', encPass).replace('<db_password>', encPass)
-        }
-        if (url.includes('<db_password>')) {
-            return url.replace('<db_password>', encPass)
-        }
-        const hasCredentials = /^mongodb(\+srv)?:\/\/[^/]*@/.test(url)
-        if (!hasCredentials && user && password) {
-            return url.replace(/^(mongodb(\+srv)?:\/\/)/, `$1${encUser}:${encPass}@`)
-        }
-        return url
-    }
-
-    const scheme = url.endsWith('.mongodb.net') ? 'mongodb+srv' : 'mongodb'
-    const auth = user && password ? `${encUser}:${encPass}@` : ''
-    return `${scheme}://${auth}${url}`
-}
-
-const initialGames = [
+const startingGames = [
     {name: "Witcher 3", price: 29.99},
     {name: "Cyberpunk 2077", price: 59.99},
     {name: "Minecraft", price: 26.99},
@@ -53,24 +38,62 @@ const initialGames = [
     {name: "Forza Horizon 5", price: 59.99}
 ]
 
-async function connectDB() {
-    const uri = buildMongoUri()
+async function connect() {
+    await client.connect()
+    const database = client.db('gamesdb')
+    games = database.collection('games')
+    counters = database.collection('counters')
 
-    const hasDbName = /^mongodb(\+srv)?:\/\/[^/]+\/[^/?]+/.test(uri)
-    const options = hasDbName ? {} : {dbName: env('DB_NAME', 'MONGO_DB_NAME', 'DATABASE_NAME') || 'games-api'}
+    await games.createIndex({name: 1}, {unique: true, ...ignoreCase})
 
-    console.log('Connecting to:', uri.replace(/\/\/[^@/]*@/, '//***:***@'))
-
-    await mongoose.connect(uri, options)
-    console.log('MongoDB connected')
-
-    await Game.init()
-
-    if (await Game.countDocuments() === 0) {
-        await Game.insertMany(initialGames)
-        console.log('Database seeded with initial games')
+    if (await games.countDocuments() === 0) {
+        for (const game of startingGames) {
+            await addGame(game.name, game.price)
+        }
     }
 }
 
-module.exports = connectDB
-module.exports.buildMongoUri = buildMongoUri
+async function getNextId() {
+    const counter = await counters.findOneAndUpdate(
+        {_id: 'games'},
+        {$inc: {seq: 1}},
+        {upsert: true, returnDocument: 'after'}
+    )
+    return counter.seq
+}
+
+async function getGames() {
+    return await games.find({}, noMongoId).sort({id: 1}).toArray()
+}
+
+async function getGame(id) {
+    return await games.findOne({id: Number(id)}, noMongoId)
+}
+
+// true, если игра с таким именем уже есть (exceptId - не считать игру с этим id)
+async function nameExists(name, exceptId) {
+    const filter = {name: name.trim()}
+    if (exceptId !== undefined) filter.id = {$ne: Number(exceptId)}
+    return (await games.findOne(filter, ignoreCase)) !== null
+}
+
+async function addGame(name, price) {
+    const game = {id: await getNextId(), name: name.trim(), price}
+    await games.insertOne({...game})
+    return game
+}
+
+async function updateGame(id, name, price) {
+    return await games.findOneAndUpdate(
+        {id: Number(id)},
+        {$set: {name: name.trim(), price}},
+        {returnDocument: 'after', ...noMongoId}
+    )
+}
+
+async function deleteGame(id) {
+    const result = await games.deleteOne({id: Number(id)})
+    return result.deletedCount > 0
+}
+
+module.exports = {connect, getGames, getGame, nameExists, addGame, deleteGame, updateGame}

@@ -1,12 +1,10 @@
 const express = require('express')
 const cors = require('cors')
+const fs = require('fs')
 const path = require('path')
-const mongoose = require('mongoose')
 const swaggerUi = require('swagger-ui-express')
 const YAML = require('yamljs')
-
-const connectDB = require('./db')
-const Game = require('./models/Game')
+const db = require('./db')
 
 const app = express()
 const port = 8080
@@ -14,10 +12,28 @@ const port = 8080
 app.use(cors())
 app.use(express.json())
 
-const swaggerDocument = YAML.load(path.join(__dirname, 'docs', 'swagger.yaml'))
-app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
+function findSwaggerFile(dir) {
+    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
+        if (entry.isFile() && /^swagger\.ya?ml$/i.test(entry.name)) {
+            return path.join(dir, entry.name)
+        }
+    }
+    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
+        if (entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+            const found = findSwaggerFile(path.join(dir, entry.name))
+            if (found) return found
+        }
+    }
+    return null
+}
 
-const collation = {locale: 'en', strength: 2}
+const swaggerFile = findSwaggerFile(__dirname)
+if (swaggerFile) {
+    console.log('Swagger file:', swaggerFile)
+    app.use('/docs', swaggerUi.serve, swaggerUi.setup(YAML.load(swaggerFile)))
+} else {
+    console.warn('swagger.yaml не найден в ' + __dirname + ' - /docs отключён. Положи swagger.yaml рядом с index.js')
+}
 
 function isValidGame(body) {
     return body
@@ -25,103 +41,64 @@ function isValidGame(body) {
         && typeof body.price === 'number' && body.price >= 0
 }
 
-function findByName(name, exceptId) {
-    const filter = {name: name.trim()}
-    if (exceptId) filter._id = {$ne: exceptId}
-    return Game.findOne(filter).collation(collation)
-}
-
-app.get('/games', async (req, res) => {
-    try {
-        const games = await Game.find().sort({_id: 1})
-        res.send(games)
-    } catch (err) {
-        res.status(500).send({error: "Server error"})
+const handle = fn => (req, res) => fn(req, res).catch(err => {
+    if (err.code === 11000) {
+        return res.status(409).send({error: "Game with this name already exists"})
     }
+    console.error(err)
+    res.status(500).send({error: "Server error"})
 })
 
-app.get('/games/:id', async (req, res) => {
-    try {
-        if (!mongoose.isValidObjectId(req.params.id)) {
-            return res.status(404).send({error: "Game not found"})
-        }
-        const game = await Game.findById(req.params.id)
-        if (!game) {
-            return res.status(404).send({error: "Game not found"})
-        }
-        res.send(game)
-    } catch (err) {
-        res.status(500).send({error: "Server error"})
-    }
-})
+app.get('/games', handle(async (req, res) => {
+    res.send(await db.getGames())
+}))
 
-app.post('/games', async (req, res) => {
-    try {
-        if (!isValidGame(req.body)) {
-            return res.status(400).send({error: "name (string) and price (number >= 0) are required"})
-        }
-        if (await findByName(req.body.name)) {
-            return res.status(409).send({error: "Game with this name already exists"})
-        }
-        const game = await Game.create({name: req.body.name.trim(), price: req.body.price})
-        res.status(201)
-            .location(`${getBaseUrl(req)}/games/${game.id}`)
-            .send(game)
-    } catch (err) {
-        if (err.code === 11000) {
-            return res.status(409).send({error: "Game with this name already exists"})
-        }
-        res.status(500).send({error: "Server error"})
+app.get('/games/:id', handle(async (req, res) => {
+    const game = await db.getGame(req.params.id)
+    if (!game) {
+        return res.status(404).send({error: "Game not found"})
     }
-})
+    res.send(game)
+}))
 
-app.put('/games/:id', async (req, res) => {
-    try {
-        if (!mongoose.isValidObjectId(req.params.id)) {
-            return res.status(404).send({error: "Game not found"})
-        }
-        const game = await Game.findById(req.params.id)
-        if (!game) {
-            return res.status(404).send({error: "Game not found"})
-        }
-        if (!isValidGame(req.body)) {
-            return res.status(400).send({error: "name (string) and price (number >= 0) are required"})
-        }
-        if (await findByName(req.body.name, game._id)) {
-            return res.status(409).send({error: "Game with this name already exists"})
-        }
-        game.name = req.body.name.trim()
-        game.price = req.body.price
-        await game.save()
-        res.send(game)
-    } catch (err) {
-        if (err.code === 11000) {
-            return res.status(409).send({error: "Game with this name already exists"})
-        }
-        res.status(500).send({error: "Server error"})
+app.post('/games', handle(async (req, res) => {
+    if (!isValidGame(req.body)) {
+        return res.status(400).send({error: "name (string) and price (number >= 0) are required"})
     }
-})
+    if (await db.nameExists(req.body.name)) {
+        return res.status(409).send({error: "Game with this name already exists"})
+    }
+    const game = await db.addGame(req.body.name, req.body.price)
+    res.status(201)
+        .location(`${getBaseUrl(req)}/games/${game.id}`)
+        .send(game)
+}))
 
-app.delete('/games/:id', async (req, res) => {
-    try {
-        if (!mongoose.isValidObjectId(req.params.id)) {
-            return res.status(404).send({error: "Game not found"})
-        }
-        const game = await Game.findByIdAndDelete(req.params.id)
-        if (!game) {
-            return res.status(404).send({error: "Game not found"})
-        }
-        res.status(204).send()
-    } catch (err) {
-        res.status(500).send({error: "Server error"})
+app.put('/games/:id', handle(async (req, res) => {
+    if (!await db.getGame(req.params.id)) {
+        return res.status(404).send({error: "Game not found"})
     }
-})
+    if (!isValidGame(req.body)) {
+        return res.status(400).send({error: "name (string) and price (number >= 0) are required"})
+    }
+    if (await db.nameExists(req.body.name, req.params.id)) {
+        return res.status(409).send({error: "Game with this name already exists"})
+    }
+    res.send(await db.updateGame(req.params.id, req.body.name, req.body.price))
+}))
+
+app.delete('/games/:id', handle(async (req, res) => {
+    if (!await db.deleteGame(req.params.id)) {
+        return res.status(404).send({error: "Game not found"})
+    }
+    res.status(204).send()
+}))
 
 function getBaseUrl(req) {
     return `${req.protocol}://${req.headers.host}`
 }
 
-connectDB()
+db.connect()
     .then(() => {
         app.listen(port, () => {
             console.log(`API up at: http://localhost:${port}`)
