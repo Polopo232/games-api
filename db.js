@@ -1,8 +1,46 @@
+require('dotenv').config({override: true})
+
 const mongoose = require('mongoose')
 const Game = require('./models/Game')
 
-// Своя строка подключения: set MONGO_URI=... (Atlas или другой сервер)
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/games-api'
+function env(...names) {
+    for (const name of names) {
+        if (process.env[name]) return process.env[name]
+    }
+    return undefined
+}
+
+function buildMongoUri() {
+    const user = env('MONGODB_USERNAME')
+    const password = env('MONGODB_PASSWORD')
+    let url = env('MONGODB_URI')
+
+    if (!url) {
+        throw new Error('In .env not found (MONGO_URI / MONGODB_URI / DB_URL / URL)')
+    }
+    url = url.trim().replace(/^["']|["']$/g, '')
+
+    const encUser = user ? encodeURIComponent(user) : ''
+    const encPass = password ? encodeURIComponent(password) : ''
+
+    if (/^mongodb(\+srv)?:\/\//.test(url)) {
+        if (url.includes('<password>')) {
+            return url.replace('<password>', encPass).replace('<db_password>', encPass)
+        }
+        if (url.includes('<db_password>')) {
+            return url.replace('<db_password>', encPass)
+        }
+        const hasCredentials = /^mongodb(\+srv)?:\/\/[^/]*@/.test(url)
+        if (!hasCredentials && user && password) {
+            return url.replace(/^(mongodb(\+srv)?:\/\/)/, `$1${encUser}:${encPass}@`)
+        }
+        return url
+    }
+
+    const scheme = url.endsWith('.mongodb.net') ? 'mongodb+srv' : 'mongodb'
+    const auth = user && password ? `${encUser}:${encPass}@` : ''
+    return `${scheme}://${auth}${url}`
+}
 
 const initialGames = [
     {name: "Witcher 3", price: 29.99},
@@ -16,13 +54,18 @@ const initialGames = [
 ]
 
 async function connectDB() {
-    await mongoose.connect(MONGO_URI)
+    const uri = buildMongoUri()
+
+    const hasDbName = /^mongodb(\+srv)?:\/\/[^/]+\/[^/?]+/.test(uri)
+    const options = hasDbName ? {} : {dbName: env('DB_NAME', 'MONGO_DB_NAME', 'DATABASE_NAME') || 'games-api'}
+
+    console.log('Connecting to:', uri.replace(/\/\/[^@/]*@/, '//***:***@'))
+
+    await mongoose.connect(uri, options)
     console.log('MongoDB connected')
 
-    // создаём уникальный индекс по имени (без учёта регистра)
     await Game.init()
 
-    // если коллекция пустая, заполняем начальными играми
     if (await Game.countDocuments() === 0) {
         await Game.insertMany(initialGames)
         console.log('Database seeded with initial games')
@@ -30,3 +73,4 @@ async function connectDB() {
 }
 
 module.exports = connectDB
+module.exports.buildMongoUri = buildMongoUri

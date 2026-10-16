@@ -14,11 +14,10 @@ const port = 8080
 app.use(cors())
 app.use(express.json())
 
-// Swagger UI: http://localhost:8080/docs
-const swaggerDocument = YAML.load(path.join(__dirname, 'swagger.yaml'))
+const swaggerDocument = YAML.load(path.join(__dirname, 'docs', 'swagger.yaml'))
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
 
-const collation = {locale: 'en', strength: 2} // сравнение без учёта регистра
+const collation = {locale: 'en', strength: 2}
 
 function isValidGame(body) {
     return body
@@ -26,8 +25,6 @@ function isValidGame(body) {
         && typeof body.price === 'number' && body.price >= 0
 }
 
-
-// Ищет игру с таким же именем (кроме игры с id = exceptId)
 function findByName(name, exceptId) {
     const filter = {name: name.trim()}
     if (exceptId) filter._id = {$ne: exceptId}
@@ -71,14 +68,13 @@ app.post('/games', async (req, res) => {
             .location(`${getBaseUrl(req)}/games/${game.id}`)
             .send(game)
     } catch (err) {
-        if (err.code === 11000) { // сработал уникальный индекс (гонка запросов)
+        if (err.code === 11000) {
             return res.status(409).send({error: "Game with this name already exists"})
         }
         res.status(500).send({error: "Server error"})
     }
 })
 
-// UPDATE: полная замена игры по id
 app.put('/games/:id', async (req, res) => {
     try {
         if (!mongoose.isValidObjectId(req.params.id)) {
