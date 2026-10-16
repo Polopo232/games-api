@@ -54,7 +54,7 @@ app.post('/games', (req, res) => {
         .send(game)
 })
 
-// 11
+// 
 
 app.delete('/games/:id', (req, res) => {
     const index = req.params.id - 1
