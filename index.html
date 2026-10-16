@@ -19,11 +19,42 @@
     </thead>
     <tbody>
     <tr v-for="game in games" :key="game.id">
-      <td>{{ game.name }}</td>
+      <td><a href="#" @click.prevent="getGame(game.id)">{{ game.name }}</a></td>
       <td>{{ game.price }}</td>
     </tr>
     </tbody>
   </table>
+
+  <!-- Modal -->
+  <div class="modal fade" id="gameInfoModal" tabindex="-1" aria-labelledby="gameInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="gameInfoModalLabel">Game Details</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <table class="table table-striped">
+            <tr>
+              <th>ID</th>
+              <td>{{ gameInModal.id }}</td>
+            </tr>
+            <tr>
+              <th>Name</th>
+              <td>{{ gameInModal.name }}</td>
+            </tr>
+            <tr>
+              <th>Price</th>
+              <td>{{ gameInModal.price }}</td>
+            </tr>
+          </table>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
@@ -32,12 +63,27 @@
   Vue.createApp({
     data() {
       return {
-        games: []
+        games: [],
+        gameInModal: {
+          id: null,
+          name: null,
+          price: null
+        }
       }
     },
     async created() {
       const response = await fetch('http://localhost:8080/games');
       this.games = await response.json();
+    },
+    methods: {
+      async getGame(id) {
+        const response = await fetch(`http://localhost:8080/games/${id}`);
+        this.gameInModal = await response.json();
+
+        const modalElement = document.getElementById('gameInfoModal');
+        const gameInfoModal = new bootstrap.Modal(modalElement);
+        gameInfoModal.show();
+      }
     }
   }).mount('#app')
 </script>
