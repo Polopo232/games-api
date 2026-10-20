@@ -66,8 +66,9 @@ if (!process.env.ADMIN_PASSWORD) {
 
 async function seedUsers() {
     await db.saveUser(ADMIN_USERNAME, 'admin', hashPassword(ADMIN_PASSWORD))
-    if (!await db.getUser('user')) {
-        await db.addUser('user', 'user', hashPassword('user123'))
+    const user = await db.getUser('user')
+    if (!user || !user.passwordHash) {
+        await db.saveUser('user', 'user', hashPassword('user123'))
     }
 }
 

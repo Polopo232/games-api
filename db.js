@@ -1,6 +1,7 @@
 require('dotenv').config({override: true})
 const {MongoClient} = require('mongodb')
 
+
 function getUrl() {
     let url = process.env.MONGODB_URI || process.env.MONGODB_URL
     if (!url) {
@@ -61,13 +62,28 @@ async function connect() {
 
     await games.createIndex({name: 1}, {unique: true, ...ignoreCase})
 
-    await users.createIndex({username: 1}, {unique: true, ...ignoreCase})
-    await sessions.createIndex({tokenHash: 1}, {unique: true})
-    await sessions.createIndex({createdAt: 1}, {expireAfterSeconds: SESSION_SECONDS})
+    await sessions.deleteMany({tokenHash: null})
+    await ensureIndex(users, {username: 1}, {unique: true, ...ignoreCase})
+    await ensureIndex(sessions, {tokenHash: 1}, {unique: true})
+    await ensureIndex(sessions, {createdAt: 1}, {expireAfterSeconds: SESSION_SECONDS})
 
     if (await games.countDocuments() === 0) {
         for (const game of startingGames) {
             await addGame(game.name, game.price)
+        }
+    }
+}
+
+async function ensureIndex(collection, keys, options) {
+    try {
+        await collection.createIndex(keys, options)
+    } catch (err) {
+        if (err.code === 85 || err.code === 86) {
+            const name = Object.entries(keys).map(([key, dir]) => key + '_' + dir).join('_')
+            await collection.dropIndex(name)
+            await collection.createIndex(keys, options)
+        } else {
+            throw err
         }
     }
 }
