@@ -31,7 +31,7 @@ const swaggerFile = findSwaggerFile(__dirname)
 if (swaggerFile) {
     console.log('Swagger file:', swaggerFile)
     app.use('/docs', swaggerUi.serve, swaggerUi.setup(YAML.load(swaggerFile), {
-        swaggerOptions: {persistAuthorization: true} // токен не сбрасывается при обновлении страницы
+        swaggerOptions: {persistAuthorization: true}
     }))
 } else {
     console.warn('swagger.yaml не найден в ' + __dirname + ' - /docs отключён. Положи swagger.yaml рядом с index.js')
@@ -51,12 +51,9 @@ const handle = fn => (req, res, next) => fn(req, res, next).catch(err => {
     res.status(500).send({error: "Server error"})
 })
 
-// ---------- Фронтенд (отдаём только эти два файла, чтобы .env и код сервера не были доступны) ----------
-
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')))
 app.get('/rest-client.js', (req, res) => res.sendFile(path.join(__dirname, 'rest-client.js')))
 
-// ---------- Авторизация ----------
 
 function getCookie(req, name) {
     for (const part of (req.headers.cookie || '').split(';')) {
@@ -151,8 +148,6 @@ app.post('/logout', requireLogin, handle(async (req, res) => {
 app.get('/me', requireLogin, (req, res) => {
     res.send(req.user)
 })
-
-// ---------- Игры ----------
 
 app.get('/games',handle(async (req, res) => {
     res.send(await db.getGames())
