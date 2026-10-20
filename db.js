@@ -137,7 +137,6 @@ async function usernameExists(username) {
     return (await users.findOne({username: username.trim()}, ignoreCase)) !== null
 }
 
-// Возвращает {username, role} при правильном пароле, иначе null
 async function checkLogin(username, password) {
     const user = await users.findOne({username: username.trim()}, ignoreCase)
     if (!user || !checkPassword(password, user.password)) return null
