@@ -186,6 +186,7 @@ createApp({
             }
             this.clearSession()
         },
+
         async checkSession() {
             try {
                 const me = await this.request('/me')

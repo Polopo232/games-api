@@ -74,8 +74,7 @@ async function seedUsers() {
 
 async function requireAuth(req, res, next) {
     try {
-        const header = req.headers.authorization || ''
-        const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+        const token = (req.headers.authorization || '').trim().replace(/^Bearer\s+/i, '')
         if (!token) {
             return res.status(401).send({error: "Login required"})
         }
@@ -106,9 +105,11 @@ function isValidGame(body) {
 }
 
 const handle = fn => (req, res) => fn(req, res).catch(err => {
-    if (err.code === 11000) {
-        const isUsername = err.keyPattern && err.keyPattern.username
-        return res.status(409).send({error: isUsername ? "Username is already taken" : "Game with this name already exists"})
+    if (err.code === 11000 && err.keyPattern && err.keyPattern.username) {
+        return res.status(409).send({error: "Username is already taken"})
+    }
+    if (err.code === 11000 && err.keyPattern && err.keyPattern.name) {
+        return res.status(409).send({error: "Game with this name already exists"})
     }
     console.error(err)
     res.status(500).send({error: "Server error"})

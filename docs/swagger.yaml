@@ -30,7 +30,7 @@ info:
     * **admin** - can also add, edit and delete games (POST / PUT / DELETE).
 
     Log in with `POST /login`, copy the `token` and press **Authorize** at the top of this page.
-    Enter it as `Bearer <token>`.
+    Paste only the token, without the word `Bearer`.
 
     Default accounts: `admin` / `123` and `user` / `user123`.
 
@@ -39,7 +39,7 @@ securityDefinitions:
     type: apiKey
     name: Authorization
     in: header
-    description: 'Enter: Bearer <token>'
+    description: 'Paste only the token returned by POST /login'
 
 paths:
   /login:

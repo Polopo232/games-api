@@ -1,7 +1,6 @@
 require('dotenv').config({override: true})
 const {MongoClient} = require('mongodb')
 
-
 function getUrl() {
     let url = process.env.MONGODB_URI || process.env.MONGODB_URL
     if (!url) {
@@ -62,6 +61,8 @@ async function connect() {
 
     await games.createIndex({name: 1}, {unique: true, ...ignoreCase})
 
+    await dropForeignIndexes(users, ['_id_', 'username_1'])
+    await dropForeignIndexes(sessions, ['_id_', 'tokenHash_1', 'createdAt_1'])
     await sessions.deleteMany({tokenHash: null})
     await ensureIndex(users, {username: 1}, {unique: true, ...ignoreCase})
     await ensureIndex(sessions, {tokenHash: 1}, {unique: true})
@@ -70,6 +71,21 @@ async function connect() {
     if (await games.countDocuments() === 0) {
         for (const game of startingGames) {
             await addGame(game.name, game.price)
+        }
+    }
+}
+
+async function dropForeignIndexes(collection, keep) {
+    let indexes
+    try {
+        indexes = await collection.indexes()
+    } catch (err) {
+        if (err.code === 26) return
+        throw err
+    }
+    for (const index of indexes) {
+        if (!keep.includes(index.name)) {
+            await collection.dropIndex(index.name)
         }
     }
 }
