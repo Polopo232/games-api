@@ -32,7 +32,7 @@ info:
     Log in with `POST /login`, copy the `token` and press **Authorize** at the top of this page.
     Enter it as `Bearer <token>`.
 
-    Default accounts: `admin` / `admin123` and `user` / `user123`.
+    Default accounts: `admin` / `123` and `user` / `user123`.
 
 securityDefinitions:
   Bearer:
@@ -281,7 +281,7 @@ definitions:
         example: admin
       password:
         type: string
-        example: admin123
+        example: '123'
 
   User:
     type: object

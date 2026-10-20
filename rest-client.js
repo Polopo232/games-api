@@ -1,180 +1,200 @@
-const API = location.protocol === 'file:' ? 'http://localhost:8080' : '';
+const API_URL = 'http://localhost:8080'
 
-function showModal(id) {
-    bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).show();
-}
+const {createApp} = Vue
 
-function hideModal(id) {
-    bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).hide();
-}
-
-Vue.createApp({
+createApp({
     data() {
         return {
             games: [],
-            gameInModal: {
-                id: null,
-                name: null,
-                price: null
-            },
-
-            token: localStorage.getItem('token'),
-            user: null,
-            loginMode: 'login',
+            gameInModal: {},
+            form: {id: null, name: '', price: null},
+            formError: '',
             loginForm: {username: '', password: ''},
             loginError: '',
-
-            gameForm: {id: null, name: '', price: 0},
-            formError: '',
-
-            gameToDelete: null,
-            deleteError: '',
-
-            message: ''
+            message: '',
+            token: localStorage.getItem('token') || '',
+            username: localStorage.getItem('username') || '',
+            role: localStorage.getItem('role') || ''
         }
     },
+
     computed: {
         isAdmin() {
-            return this.user !== null && this.user.role === 'admin';
-        },
-        isEditing() {
-            return this.gameForm.id !== null;
+            return this.token !== '' && this.role === 'admin'
         }
     },
-    async created() {
-        await this.loadUser();
-        await this.loadGames();
+
+    async mounted() {
+        await this.loadGames()
+        if (this.token) await this.checkSession()
     },
+
     methods: {
-        async api(url, options = {}) {
-            const headers = {'Content-Type': 'application/json'};
-            if (this.token) {
-                headers['Authorization'] = `Bearer ${this.token}`;
-            }
-            const response = await fetch(API + url, {...options, headers});
-            if (response.status === 401 && this.token && url !== '/login') {
-                this.clearLogin();
-            }
-            return response;
-        },
+        async request(path, options = {}) {
+            const sendToken = this.token && path !== '/login' && path !== '/register'
+            const headers = {}
+            if (options.body) headers['Content-Type'] = 'application/json'
+            if (sendToken) headers['Authorization'] = 'Bearer ' + this.token
 
-        async errorText(response) {
+            let response
             try {
-                const body = await response.json();
-                return body.error || `Error ${response.status}`;
-            } catch {
-                return `Error ${response.status}`;
+                response = await fetch(API_URL + path, {...options, headers})
+            } catch (err) {
+                throw new Error('Cannot connect to the server')
             }
+
+            if (response.status === 204) return null
+
+            let body = null
+            try {
+                body = await response.json()
+            } catch (err) {
+            }
+
+            if (response.status === 401 && sendToken) {
+                this.clearSession()
+                throw new Error('Session expired, please log in again')
+            }
+            if (!response.ok) {
+                throw new Error((body && body.error) || 'Request failed (' + response.status + ')')
+            }
+            return body
         },
 
-        flash(text) {
-            this.message = text;
-            setTimeout(() => this.message = '', 3000);
+        showModal(id) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).show()
         },
 
-        // ---------- Игры ----------
+        hideModal(id) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).hide()
+        },
 
         async loadGames() {
-            const response = await this.api('/games');
-            this.games = await response.json();
+            try {
+                this.games = await this.request('/games')
+            } catch (err) {
+                this.message = err.message
+            }
         },
 
         async getGame(id) {
-            const response = await this.api(`/games/${id}`);
-            this.gameInModal = await response.json();
-            showModal('gameInfoModal');
+            try {
+                this.gameInModal = await this.request('/games/' + id)
+                this.showModal('gameInfoModal')
+            } catch (err) {
+                this.message = err.message
+            }
         },
 
-        openAddForm() {
-            this.gameForm = {id: null, name: '', price: 0};
-            this.formError = '';
-            showModal('gameFormModal');
+        openAdd() {
+            this.form = {id: null, name: '', price: null}
+            this.formError = ''
+            this.showModal('gameFormModal')
         },
 
-        openEditForm(game) {
-            this.gameForm = {id: game.id, name: game.name, price: game.price};
-            this.formError = '';
-            hideModal('gameInfoModal');
-            showModal('gameFormModal');
+        openEdit(game) {
+            this.form = {id: game.id, name: game.name, price: game.price}
+            this.formError = ''
+            this.showModal('gameFormModal')
         },
 
         async saveGame() {
-            const body = JSON.stringify({
-                name: this.gameForm.name,
-                price: Number(this.gameForm.price)
-            });
-            const response = this.isEditing
-                ? await this.api(`/games/${this.gameForm.id}`, {method: 'PUT', body})
-                : await this.api('/games', {method: 'POST', body});
-
-            if (!response.ok) {
-                this.formError = await this.errorText(response);
-                return;
+            const name = String(this.form.name || '').trim()
+            const price = Number(this.form.price)
+            if (name === '' || this.form.price === '' || this.form.price === null || Number.isNaN(price) || price < 0) {
+                this.formError = 'Enter a name and a price (0 or more)'
+                return
             }
-            hideModal('gameFormModal');
-            this.flash(this.isEditing ? 'Game updated' : 'Game added');
-            await this.loadGames();
-        },
 
-        askDelete(game) {
-            this.gameToDelete = game;
-            this.deleteError = '';
-            hideModal('gameInfoModal');
-            showModal('deleteModal');
-        },
-
-        async deleteGame() {
-            const response = await this.api(`/games/${this.gameToDelete.id}`, {method: 'DELETE'});
-            if (!response.ok) {
-                this.deleteError = await this.errorText(response);
-                return;
+            try {
+                const body = JSON.stringify({name, price})
+                if (this.form.id) {
+                    await this.request('/games/' + this.form.id, {method: 'PUT', body})
+                } else {
+                    await this.request('/games', {method: 'POST', body})
+                }
+                this.hideModal('gameFormModal')
+                await this.loadGames()
+            } catch (err) {
+                this.formError = err.message
             }
-            hideModal('deleteModal');
-            this.flash(`"${this.gameToDelete.name}" deleted`);
-            await this.loadGames();
         },
 
-        // ---------- Вход / выход ----------
-
-        async loadUser() {
-            if (!this.token) return;
-            const response = await this.api('/me');
-            this.user = response.ok ? await response.json() : null;
-        },
-
-        openLogin(mode = 'login') {
-            this.loginMode = mode;
-            this.loginForm = {username: '', password: ''};
-            this.loginError = '';
-            showModal('loginModal');
-        },
-
-        async submitLogin() {
-            const url = this.loginMode === 'login' ? '/login' : '/register';
-            const response = await this.api(url, {
-                method: 'POST',
-                body: JSON.stringify(this.loginForm)
-            });
-            if (!response.ok) {
-                this.loginError = await this.errorText(response);
-                return;
+        async deleteGame(game) {
+            if (!confirm('Delete "' + game.name + '"?')) return
+            try {
+                await this.request('/games/' + game.id, {method: 'DELETE'})
+                await this.loadGames()
+            } catch (err) {
+                this.message = err.message
             }
-            const data = await response.json();
-            this.token = data.token;
-            this.user = data.user;
-            localStorage.setItem('token', data.token);
-            hideModal('loginModal');
+        },
+
+        openLogin() {
+            this.loginForm = {username: '', password: ''}
+            this.loginError = ''
+            this.showModal('loginModal')
+        },
+
+        saveSession(data) {
+            this.token = data.token
+            this.username = data.user.username
+            this.role = data.user.role
+            localStorage.setItem('token', this.token)
+            localStorage.setItem('username', this.username)
+            localStorage.setItem('role', this.role)
+            this.loginForm.password = ''
+            this.message = ''
+            this.hideModal('loginModal')
+        },
+
+        clearSession() {
+            this.token = ''
+            this.username = ''
+            this.role = ''
+            localStorage.removeItem('token')
+            localStorage.removeItem('username')
+            localStorage.removeItem('role')
+        },
+
+        async login() {
+            try {
+                this.saveSession(await this.request('/login', {
+                    method: 'POST',
+                    body: JSON.stringify(this.loginForm)
+                }))
+            } catch (err) {
+                this.loginError = err.message
+            }
+        },
+
+        async register() {
+            try {
+                this.saveSession(await this.request('/register', {
+                    method: 'POST',
+                    body: JSON.stringify(this.loginForm)
+                }))
+            } catch (err) {
+                this.loginError = err.message
+            }
         },
 
         async logout() {
-            await this.api('/logout', {method: 'POST'});
-            this.clearLogin();
+            try {
+                await this.request('/logout', {method: 'POST'})
+            } catch (err) {
+            }
+            this.clearSession()
         },
-
-        clearLogin() {
-            this.token = null;
-            this.user = null;
-            localStorage.removeItem('token');
+        async checkSession() {
+            try {
+                const me = await this.request('/me')
+                this.username = me.username
+                this.role = me.role
+                localStorage.setItem('username', me.username)
+                localStorage.setItem('role', me.role)
+            } catch (err) {
+            }
         }
     }
 }).mount('#app')

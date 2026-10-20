@@ -1,18 +1,24 @@
 require('dotenv').config({override: true})
-const crypto = require('crypto')
 const {MongoClient} = require('mongodb')
 
 function getUrl() {
-    let url = (process.env.MONGODB_URI || process.env.MONGODB_URL || 'mongodb://localhost:27017')
-        .trim().replace(/^["']|["']$/g, '')
+    let url = process.env.MONGODB_URI || process.env.MONGODB_URL
+    if (!url) {
+        const found = Object.keys(process.env).filter(name => name.startsWith('MONGO')).join(', ') || 'нет'
+        console.warn('ВНИМАНИЕ: MONGODB_URI не найден в .env, используется localhost. Найденные переменные MONGO*: ' + found)
+        url = 'mongodb://localhost:27017'
+    }
+    url = url.trim().replace(/^["']|["']$/g, '')
     const user = process.env.MONGODB_USERNAME
     const password = process.env.MONGODB_PASSWORD
 
     if (!url.includes('://')) {
         url = (url.endsWith('.mongodb.net') ? 'mongodb+srv://' : 'mongodb://') + url
     }
-    if (password && /<(db_)?password>/.test(url)) {
-        return url.replace(/<(db_)?password>/, encodeURIComponent(password))
+    if (/<(db_)?(username|password)>/.test(url)) {
+        return url
+            .replace(/<(db_)?username>/, encodeURIComponent(user || ''))
+            .replace(/<(db_)?password>/, encodeURIComponent(password || ''))
     }
     if (user && password && !url.includes('@')) {
         return url.replace('://', `://${encodeURIComponent(user)}:${encodeURIComponent(password)}@`)
@@ -20,7 +26,8 @@ function getUrl() {
     return url
 }
 
-const client = new MongoClient(getUrl())
+const url = getUrl()
+const client = new MongoClient(url)
 
 let games
 let counters
@@ -28,6 +35,7 @@ let users
 let sessions
 
 const noMongoId = {projection: {_id: 0}}
+const SESSION_SECONDS = 8 * 60 * 60
 const ignoreCase = {collation: {locale: 'en', strength: 2}}
 
 const startingGames = [
@@ -42,7 +50,9 @@ const startingGames = [
 ]
 
 async function connect() {
+    console.log('Connecting to:', url.replace(/\/\/[^@/]*@/, '//***:***@'))
     await client.connect()
+    console.log('MongoDB connected')
     const database = client.db('gamesdb')
     games = database.collection('games')
     counters = database.collection('counters')
@@ -50,21 +60,15 @@ async function connect() {
     sessions = database.collection('sessions')
 
     await games.createIndex({name: 1}, {unique: true, ...ignoreCase})
+
     await users.createIndex({username: 1}, {unique: true, ...ignoreCase})
-    await sessions.createIndex({token: 1}, {unique: true})
-    await sessions.createIndex({createdAt: 1}, {expireAfterSeconds: 60 * 60 * 24 * 7})
+    await sessions.createIndex({tokenHash: 1}, {unique: true})
+    await sessions.createIndex({createdAt: 1}, {expireAfterSeconds: SESSION_SECONDS})
 
     if (await games.countDocuments() === 0) {
         for (const game of startingGames) {
             await addGame(game.name, game.price)
         }
-    }
-
-    if (await users.countDocuments() === 0) {
-        for (const u of startingUsers) {
-            await addUser(u.username, u.password, u.role)
-        }
-        console.log('Созданы пользователи: ' + startingUsers.map(u => `${u.username} (${u.role})`).join(', '))
     }
 }
 
@@ -110,54 +114,41 @@ async function deleteGame(id) {
     return result.deletedCount > 0
 }
 
-
-function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-    const hash = crypto.scryptSync(password, salt, 64).toString('hex')
-    return `${salt}:${hash}`
+async function getUser(username) {
+    return await users.findOne({username: String(username).trim()}, ignoreCase)
 }
 
-function checkPassword(password, stored) {
-    const [salt, hash] = stored.split(':')
-    const test = crypto.scryptSync(password, salt, 64)
-    return crypto.timingSafeEqual(test, Buffer.from(hash, 'hex'))
+async function addUser(username, role, passwordHash) {
+    await users.insertOne({username, role, passwordHash})
 }
 
-const startingUsers = [
-    {username: process.env.ADMIN_USERNAME || 'admin', password: process.env.ADMIN_PASSWORD || 'admin123', role: 'admin'},
-    {username: process.env.USER_USERNAME || 'user', password: process.env.USER_PASSWORD || 'user123', role: 'user'}
-]
-
-async function addUser(username, password, role = 'user') {
-    const user = {username: username.trim(), password: hashPassword(password), role}
-    await users.insertOne(user)
-    return {username: user.username, role}
+async function saveUser(username, role, passwordHash) {
+    await users.updateOne(
+        {username},
+        {$set: {username, role, passwordHash}},
+        {upsert: true, ...ignoreCase}
+    )
 }
 
-async function usernameExists(username) {
-    return (await users.findOne({username: username.trim()}, ignoreCase)) !== null
+async function addSession(tokenHash, username, role) {
+    await sessions.insertOne({tokenHash, username, role, createdAt: new Date()})
 }
 
-async function checkLogin(username, password) {
-    const user = await users.findOne({username: username.trim()}, ignoreCase)
-    if (!user || !checkPassword(password, user.password)) return null
-    return {username: user.username, role: user.role}
+async function getSession(tokenHash) {
+    const session = await sessions.findOne({tokenHash})
+    if (!session) return null
+    if (Date.now() - session.createdAt.getTime() > SESSION_SECONDS * 1000) {
+        await sessions.deleteOne({tokenHash})
+        return null
+    }
+    return session
 }
 
-async function createSession(user) {
-    const token = crypto.randomBytes(32).toString('hex')
-    await sessions.insertOne({token, username: user.username, role: user.role, createdAt: new Date()})
-    return token
-}
-
-async function getSession(token) {
-    return await sessions.findOne({token}, {projection: {_id: 0, token: 0, createdAt: 0}})
-}
-
-async function deleteSession(token) {
-    await sessions.deleteOne({token})
+async function deleteSession(tokenHash) {
+    await sessions.deleteOne({tokenHash})
 }
 
 module.exports = {
     connect, getGames, getGame, nameExists, addGame, deleteGame, updateGame,
-    addUser, usernameExists, checkLogin, createSession, getSession, deleteSession
+    getUser, addUser, saveUser, addSession, getSession, deleteSession
 }

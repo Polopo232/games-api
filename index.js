@@ -1,9 +1,11 @@
+require('dotenv').config({override: true})
 const express = require('express')
 const cors = require('cors')
 const fs = require('fs')
 const path = require('path')
+const crypto = require('crypto')
 const swaggerUi = require('swagger-ui-express')
-const YAML = require('yamljs')
+const yaml = require('js-yaml')
 const db = require('./db')
 
 const app = express()
@@ -30,12 +32,71 @@ function findSwaggerFile(dir) {
 const swaggerFile = findSwaggerFile(__dirname)
 if (swaggerFile) {
     console.log('Swagger file:', swaggerFile)
-    app.use('/docs', swaggerUi.serve, swaggerUi.setup(YAML.load(swaggerFile), {
-        swaggerOptions: {persistAuthorization: true}
-    }))
+    app.use('/docs', swaggerUi.serve, swaggerUi.setup(yaml.load(fs.readFileSync(swaggerFile, 'utf8'))))
 } else {
     console.warn('swagger.yaml не найден в ' + __dirname + ' - /docs отключён. Положи swagger.yaml рядом с index.js')
 }
+
+function hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex')
+    return salt + ':' + crypto.scryptSync(password, salt, 64).toString('hex')
+}
+
+function verifyPassword(password, stored) {
+    const [salt, hash] = String(stored).split(':')
+    if (!salt || !hash) return false
+    const expected = Buffer.from(hash, 'hex')
+    const actual = crypto.scryptSync(password, salt, 64)
+    return expected.length === actual.length && crypto.timingSafeEqual(actual, expected)
+}
+
+const hashToken = token => crypto.createHash('sha256').update(token).digest('hex')
+
+async function startSession(username, role) {
+    const token = crypto.randomBytes(32).toString('hex')
+    await db.addSession(hashToken(token), username, role)
+    return {token, user: {username, role}}
+}
+
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '123'
+if (!process.env.ADMIN_PASSWORD) {
+    console.warn('ADMIN_PASSWORD не задан в .env - используется пароль по умолчанию (admin / 123)')
+}
+
+async function seedUsers() {
+    await db.saveUser(ADMIN_USERNAME, 'admin', hashPassword(ADMIN_PASSWORD))
+    if (!await db.getUser('user')) {
+        await db.addUser('user', 'user', hashPassword('user123'))
+    }
+}
+
+async function requireAuth(req, res, next) {
+    try {
+        const header = req.headers.authorization || ''
+        const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+        if (!token) {
+            return res.status(401).send({error: "Login required"})
+        }
+        const session = await db.getSession(hashToken(token))
+        if (!session) {
+            return res.status(401).send({error: "Invalid or expired token"})
+        }
+        req.token = token
+        req.user = {username: session.username, role: session.role}
+        next()
+    } catch (err) {
+        console.error(err)
+        res.status(500).send({error: "Server error"})
+    }
+}
+
+const requireAdmin = [requireAuth, (req, res, next) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).send({error: "Only admin can do this"})
+    }
+    next()
+}]
 
 function isValidGame(body) {
     return body
@@ -43,113 +104,56 @@ function isValidGame(body) {
         && typeof body.price === 'number' && body.price >= 0
 }
 
-const handle = fn => (req, res, next) => fn(req, res, next).catch(err => {
+const handle = fn => (req, res) => fn(req, res).catch(err => {
     if (err.code === 11000) {
-        return res.status(409).send({error: "Game with this name already exists"})
+        const isUsername = err.keyPattern && err.keyPattern.username
+        return res.status(409).send({error: isUsername ? "Username is already taken" : "Game with this name already exists"})
     }
     console.error(err)
     res.status(500).send({error: "Server error"})
 })
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')))
-app.get('/rest-client.js', (req, res) => res.sendFile(path.join(__dirname, 'rest-client.js')))
-
-
-function getCookie(req, name) {
-    for (const part of (req.headers.cookie || '').split(';')) {
-        const [key, ...value] = part.trim().split('=')
-        if (key === name) return decodeURIComponent(value.join('='))
-    }
-    return null
-}
-
-const auth = handle(async (req, res, next) => {
-    const header = req.headers.authorization || ''
-    const tokens = [
-        header.replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim(),
-        getCookie(req, 'token')
-    ]
-    req.user = null
-    req.token = null
-    for (const token of tokens) {
-        if (!token) continue
-        const session = await db.getSession(token)
-        if (session) {
-            req.user = session
-            req.token = token
-            break
-        }
-    }
-    next()
-})
-
-const COOKIE_OPTIONS = {httpOnly: true, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000}
-
-function requireLogin(req, res, next) {
-    if (!req.user) {
-        return res.status(401).send({error: "Login required"})
-    }
-    next()
-}
-
-function requireAdmin(req, res, next) {
-    if (!req.user) {
-        return res.status(401).send({error: "Login required"})
-    }
-    if (req.user.role !== 'admin') {
-        return res.status(403).send({error: "Only admin can do this"})
-    }
-    next()
-}
-
-app.use(auth)
-
-function isValidCredentials(body) {
-    return body
-        && typeof body.username === 'string' && body.username.trim() !== ''
-        && typeof body.password === 'string' && body.password !== ''
-}
-
-app.post('/login', handle(async (req, res) => {
-    if (!isValidCredentials(req.body)) {
-        return res.status(400).send({error: "username and password are required"})
-    }
-    const user = await db.checkLogin(req.body.username, req.body.password)
-    if (!user) {
-        return res.status(401).send({error: "Wrong username or password"})
-    }
-    const token = await db.createSession(user)
-    res.cookie('token', token, COOKIE_OPTIONS)
-    res.send({token, user})
-}))
-
 app.post('/register', handle(async (req, res) => {
-    if (!isValidCredentials(req.body)) {
+    const {username, password} = req.body || {}
+    if (typeof username !== 'string' || typeof password !== 'string' || username.trim() === '' || password === '') {
         return res.status(400).send({error: "username and password are required"})
     }
-    if (req.body.password.length < 4) {
-        return res.status(400).send({error: "Password must be at least 4 characters"})
+    const name = username.trim()
+    if (name.length < 3 || password.length < 4) {
+        return res.status(400).send({error: "username must be at least 3 characters and password at least 4"})
     }
-    if (await db.usernameExists(req.body.username)) {
+    if (name.length > 30 || password.length > 100) {
+        return res.status(400).send({error: "username or password is too long"})
+    }
+    if (await db.getUser(name)) {
         return res.status(409).send({error: "Username is already taken"})
     }
-    const user = await db.addUser(req.body.username, req.body.password, 'user')
-    const token = await db.createSession(user)
-    res.cookie('token', token, COOKIE_OPTIONS)
-    res.status(201).send({token, user})
+    await db.addUser(name, 'user', hashPassword(password))
+    res.status(201).send(await startSession(name, 'user'))
 }))
 
-app.post('/logout', requireLogin, handle(async (req, res) => {
-    await db.deleteSession(req.token)
-    res.clearCookie('token', COOKIE_OPTIONS)
+app.post('/login', handle(async (req, res) => {
+    const {username, password} = req.body || {}
+    if (typeof username !== 'string' || typeof password !== 'string' || username.trim() === '' || password === '') {
+        return res.status(400).send({error: "username and password are required"})
+    }
+    const user = await db.getUser(username)
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+        return res.status(401).send({error: "Wrong username or password"})
+    }
+    res.send(await startSession(user.username, user.role))
+}))
+
+app.post('/logout', requireAuth, handle(async (req, res) => {
+    await db.deleteSession(hashToken(req.token))
     res.status(204).send()
 }))
 
-app.get('/me', requireLogin, (req, res) => {
+app.get('/me', requireAuth, (req, res) => {
     res.send(req.user)
 })
 
-app.get('/games',handle(async (req, res) => {
+app.get('/games', handle(async (req, res) => {
     res.send(await db.getGames())
 }))
 
@@ -199,10 +203,10 @@ function getBaseUrl(req) {
 }
 
 db.connect()
+    .then(seedUsers)
     .then(() => {
         app.listen(port, () => {
-            console.log(`Site at:   http://localhost:${port}`)
-            console.log(`API up at: http://localhost:${port}/games`)
+            console.log(`API up at: http://localhost:${port}`)
             console.log(`Docs at:   http://localhost:${port}/docs`)
         })
     })
